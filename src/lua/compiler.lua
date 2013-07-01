@@ -29,7 +29,7 @@ function c_proto.new()
 		last_line = 0,
 		args = 0,
 		varg_flag = 0,
-		max_stack = 0,
+		max_stack = 1,
 		instructions = {},
 		constants = {},
 		protos = {},
@@ -66,109 +66,26 @@ function c_proto:constant(k)
 	end
 end
 
-local state = {}
-state.__mt = {__index = state}
-function state.new()
-	local state = setmetatable({}, state.__mt)
-	state.proto_root = c_proto.new()
-	state.proto = state.proto_root
-	state.ra_state_root = {}
-	state.ra_state_root.state_root = {regs = {}, top = false}
-	state.ra_state_root.state = state.ra_state_root.state_root
-	state.ra_state = state.ra_state_root
-	state.scope_root = {env = {}}
-	state.scope = state.scope_root
+local c_state =  {}
+c_state.__mt = {__index = c_state}
+function c_state.new()
+	local state = setmetatable({
+		proto = c_proto.new(),
+		ra_top = -1,
+	}, c_state.__mt)
+
 	return state
 end
-function state:push()
-	local proto = proto.new()
-	proto.parent = self.proto
-	self.proto:add_proto(prot)
-	self.proto = proto
-	self:sc_push()
-	local ra_state = {}
-	ra_state.parent = self.ra_state
-	ra_state.state_root = {regs = {}}
-	ra_state.state = ra_state.state_root
-	self.ra_state = ra_state
-end
-function state:pop()
-	self.proto = self.proto.parent
-	self:sc_pop()
-	self.ra_state = self.ra_state.parent
-end
--- Register Allocator
-function state:ra_push()
-	local state = {
-		regs = setmetatable({}, {__index = self.ra_state.state.regs}),
-		list = {},
-		top = false,
-		parent =  self.ra_state.state,
-	}
-	self.ra_state.state = state
-	
-	return state.list
-end
-function state:ra_pop()
-	self.ra_state.state = self.ra_state.state.parent
-end
-function state:ra_top()
-	self.ra_state.state.top = not self.ra_state.state.top
-end
-function state:ra_get_top()
-	local state = self.ra_state.state
-	local regs = state.regs
-	local i = self.proto.max_stack - 1	-- because max_stack is number of 
-	                                  	-- registers used, get 0 based index
-	while not regs[i] and i >= 0 do -- find top of stack
-		i = i - 1
-	end
-	return i
-end
-function state:ra_alloc()
-	local state = self.ra_state.state
-	local regs = state.regs
-	if state.top then
-		local index = self:ra_get_top() + 1
-		regs[index] = true
-		state.list[#state.list + 1] = index
-		if index + 1 > self.proto.max_stack then
-			self.proto.max_stack = index + 1
-		end
-		return index
-	else
-		for i = 0, 255 do
-			if not regs[i] then
-				regs[i] = true
-				state.list[#state.list + 1] = i
-				if i + 1 > self.proto.max_stack then
-					self.proto.max_stack = i + 1
-				end
-				return i
-			end
-		end
-	end
-end
-function state:ra_free(reg)
-	self.ra_state.state.regs[reg] = nil
-end
 
--- Scope
-function state:sc_push()
-	local scope = {
-		env = setmetatable({}, {__index = self.scope.env}),
-		parent = self.scope,
-	}
-	self.scope = scope
+function c_state:ra_push()
+	self.ra_top = self.ra_top + 1
+	if self.ra_top == self.proto.max_stack then
+		self.proto.max_stack = self.proto.max_stack + 1
+	end
+	return self.ra_top
 end
-function state:sc_pop()
-	self.scope = self.scope.parent
-end
-function state:sc_new_local(name)
-	self.scope.env[name] = self:ra_alloc()
-end
-function state:sc_get_local(name)
-	return self.scope.env[name]
+function c_state:ra_pop()
+	self.ra_top = self.ra_top - 1
 end
 
 local c_chunk, c_block, c_stat, c_stat_t, c_var, c_var_t, c_exp, c_exp_t, 
@@ -188,23 +105,25 @@ end
 c_stat_t = {
 	['varlist'] = function(state, node)
 		local n_var_list = #node.varlist.list
-		state:ra_push()
-		
-		local top_before = state:ra_get_top()
-		local reg_list = c_explist(state, node.explist, #node.varlist.list)
-		local top_after = state:ra_get_top()
-		
+
+		local top_before = state.ra_top
+		c_explist(state, node.explist, false)
+		local top_after = state.ra_top
+
 		local top_diff = top_after - top_before
 		if n_var_list > top_after - top_before then
 			top_after = top_after + 1	-- get next available register
-			state.proto:emit('LOADNIL', node.varlist.list[i-1].line, 
+			state.proto:emit('LOADNIL', node.varlist.list[top_after-1].line, 
 			                 top_after, top_after + n_var_list - top_diff)
 		end
-		
+
 		for i = n_var_list, 1, -1 do
-			c_prefixexp(state, node.varlist.list[i], 0, reg_list[i])
+			c_prefixexp(state, node.varlist.list[i], 0, top_before + i)
 		end
-		state:ra_pop()
+
+		repeat
+			state:ra_pop()
+		until state.ra_top == top_before
 	end,
 	['functioncall'] = function(state, node)
 		return c_prefixexp(state, node.prefixexp, 0)
@@ -217,22 +136,13 @@ end
 c_var_t = {
 	['name'] = function(state, node, results, arg)
 		if results == 0 then
-			local reg = state:sc_get_local(node.name)
-			if reg then
-				state.proto:emit('MOVE', node.line, reg, arg)
-			else
-				state.proto:emit('SETGLOBAL', node.line, arg, 
-				                 state.proto:constant(node.name))
-			end
+			state.proto:emit('SETGLOBAL', node.line, arg,
+			                 state.proto:constant(node.name))
 		else
-			local reg = state:sc_get_local(node.name)
-			if reg then
-				state.proto:emit('MOVE', node.line, arg, reg)
-			else
-				state.proto:emit('GETGLOBAL', node.line, arg, 
-				                 state.proto:constant(node.name))
-				return reg
-			end
+			local reg = state:ra_push()
+			state.proto:emit('GETGLOBAL', node.line, reg,
+			                 state.proto:constant(node.name))
+			return reg
 		end
 	end,
 	['prefixexp_exp'] = function(state, node, results, arg)
@@ -246,14 +156,16 @@ c_var_t = {
 	end,
 	['prefixexp_name'] = function(state, node, results, arg)
 		local reg = c_prefixexp(state, node.prefixexp, 1)
+		state:ra_pop()
 		if results == 0 then
 			state.proto:emit('SETTABLE', node.line, reg, 
 			                 state.proto:constant(node.name) + 256, arg)
 		else
+			arg = state:ra_push()
 			state.proto:emit('GETTABLE', node.line, arg, reg,
 			                 state.proto:constant(node.name) + 256)
+			return reg
 		end
-		state:ra_free(reg)
 	end
 }
 function c_var(state, node, write, arg)
@@ -262,28 +174,28 @@ end
 
 c_exp_t = {
 	['nil'] = function(state, node)
-		local reg = state:ra_alloc()
+		local reg = state:ra_push()
 		state.proto:emit('LOADNIL', node.line, reg, reg)
 		return reg
 	end,
 	['false'] = function(state, node)
-		local reg = state:ra_alloc()
+		local reg = state:ra_push()
 		state.proto:emit('LOADBOOL', node.line, reg, 0, 0)
 		return reg
 	end,
 	['true'] = function(state, node)
-		local reg = state:ra_alloc()
+		local reg = state:ra_push()
 		state.proto:emit('LOADBOOL', node.line, reg, 1, 0)
 		return reg
 	end,
 	['number'] = function(state, node)
-		local reg = state:ra_alloc()
+		local reg = state:ra_push()
 		state.proto:emit('LOADK', node.line, reg,
 		                 state.proto:constant(node.value))
 		return reg
 	end,
 	['string'] = function(state, node)
-		local reg = state:ra_alloc()
+		local reg = state:ra_push()
 		state.proto:emit('LOADK', node.line, reg,
 		                 state.proto:constant(node.value))
 		return reg
@@ -302,8 +214,7 @@ function c_exp(state, node, results)
 	return c_exp_t[node.type](state, node, results)
 end
 
-function c_explist(state, node, n_vars)
-	local reg_list = {}
+function c_explist(state, node, multi)
 	local exp_list = node.list
 	local n_exp_list = #exp_list
 	local i = 0
@@ -313,39 +224,38 @@ function c_explist(state, node, n_vars)
 		if exp.type == 'nil' then
 			local n = i
 			i = i + 1
-			local reg = state:ra_alloc()
+			local reg = state:ra_push()
 			while i <= n_exp_list and node.explist[i].type == 'nil' do
-				state:ra_alloc()
+				state:ra_push()
 				i = i + 1
 			end
 			state.proto:emit('LOADNIL', exp.line, reg, reg + i - n - 1)
 		else
-			if i == n_exp_list then	-- last exp can have multiple results
-				reg_list[#reg_list + 1] = c_exp(state, exp, -1)			
+			if i == n_exp_list and multi then	-- last exp can have multiple results
+				c_exp(state, exp, -1)
+				if (exp.type == 'prefixexp' and
+				   exp.prefixexp.type == 'functioncall') or
+				   exp.type == 'varg' then
+					return -1
+				end
 			else
-				reg_list[#reg_list + 1] = c_exp(state, exp, 1)
+				c_exp(state, exp, 1)
 			end
 		end
 	end
-	return reg_list
+	return n_exp_list
 end
 c_prefixexp_t = {
 	['var'] = function(state, node, results, arg)
 		if results == 0 then
-			c_var(state, node.var, 0, arg)
+			return c_var(state, node.var, 0, arg)
 		else
-			local reg = state:ra_alloc()
-			c_var(state, node.var, 1, reg)
-			return reg			
+			return c_var(state, node.var, 1)
 		end
 	end,
 	['functioncall'] = function(state, node, results)
-		state:ra_push()
-		state:ra_top()
 		local reg = c_prefixexp(state, node.prefixexp, 1)
-		c_functioncall(state, node.functioncall, results, reg)
-		state:ra_top()
-		state:ra_pop()
+		return c_functioncall(state, node.functioncall, results, reg)
 	end,
 	['exp'] = function(state, node)
 		return c_exp(state, node.exp, 1)
@@ -357,7 +267,7 @@ end
 
 c_functioncalls = {
 	['normal'] = function(state, node, results, func)
-		local arg_count = c_args(state, node.args)	-- TODO loop over args
+		local arg_count = c_args(state, node.args)
 		state.proto:emit('CALL', node.line, func, arg_count + 1, results + 1)
 	end,
 	['method'] = function(state, node, results, func)
@@ -370,7 +280,7 @@ end
 
 c_args_t = {
 	['explist'] = function(state, node)
-		return #c_explist(state, node)
+		return c_explist(state, node.explist, true)
 	end,
 	['tableconstructor'] = function(state, node)
 		c_tableconstructor(state, node.tableconstructor)
@@ -395,11 +305,10 @@ function M.compile(input)
 	local _, ast = parser.parse(t_stream)
 	if DEBUG then print(utils.serialize(ast, true)) end
 	
-	local state = state.new()
-	state.proto_root.varg_flag = 2
-	state.proto_root.max_stack = 1
+	local state = c_state.new()
+	state.proto.varg_flag = 2
 	c_chunk(state, ast)
-	state.proto_root:emit('RETURN', 0, 0, 1)
+	state.proto:emit('RETURN', 0, 0, 1)
 	
 	if DEBUG then print(utils.serialize(state.proto, true)) end
 	
@@ -409,7 +318,7 @@ function M.compile(input)
 			int = header:sub(8, 8):byte(),
 			size_t = header:sub(9, 9):byte(),
 		},
-		proto = state.proto_root,
+		proto = state.proto,
 	} 
 	return linker.link(chunk)
 end

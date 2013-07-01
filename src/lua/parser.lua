@@ -397,7 +397,7 @@ function p_args(t_stream, exp)
 				rule = 'args',
 				type = 'explist',
 				line = open.line,
-				list = explist,
+				explist = explist,
 			}
 		elseif t_stream:symbol('{') then
 			local _, tableconstructor = p_tableconstructor()
