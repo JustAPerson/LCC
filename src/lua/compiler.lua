@@ -90,7 +90,7 @@ end
 
 local c_chunk, c_block, c_stat, c_stat_t, c_var, c_var_t, c_exp, c_exp_t, 
       c_explist, c_prefixexp, c_prefixexp_t, c_functioncall, c_functioncalls,
-      c_args, c_args_t, c_tableconstructor
+      c_args, c_args_t, c_tableconstructor, c_field
 
 function c_chunk(state, node)
 	for _, statement in pairs(node.statements) do
@@ -213,6 +213,9 @@ c_exp_t = {
 	['prefixexp'] = function(state, node, results)
 		return c_prefixexp(state, node.prefixexp, results)
 	end,
+	['tableconstructor'] = function(state, node)
+		return c_tableconstructor(state, node.tableconstructor)
+	end,
 }
 function c_exp(state, node, results)
 	return c_exp_t[node.type](state, node, results)
@@ -299,8 +302,75 @@ function c_args(state, node)
 	return c_args_t[node.type](state, node)
 end
 
-function c_tableconstructor(state, node)
+--- Integer-to-Floating-Point-Byte
+-- converts an integer to a "floating point byte", represented as
+-- (eeeeexxx), where the real value is (1xxx) * 2^(eeeee - 1) if
+-- eeeee != 0 and (xxx) otherwise.
+-- This is taken verbatim from Yueliang.
+--@author Kein-Hong Man
+local function int2fb(x)
+	local e = 0 -- exponent
+	while x >= 16 do
+		x = math.floor((x + 1) / 2)
+		e = e + 1
+	end
+	if x < 8 then
+		return x
+	else
+		return ((e + 1) * 8) + (x - 8)
+	end
+end
 
+function c_tableconstructor(state, node)
+	local n_array, n_hash = 0
+	local fieldlist = node.fieldlist.list
+	local n_fieldlist = #fieldlist
+	for i = 1, n_fieldlist do
+		if fieldlist[i].type == 'array' then
+			n_array = n_array + 1
+		end
+	end
+	n_hash = n_fieldlist - n_array
+	local reg = state:ra_push()
+	state.proto:emit('NEWTABLE', node.line, reg, int2fb(n_array),
+	                 int2fb(n_hash))
+	local n = 0
+	for i = 1, n_fieldlist do
+		local field = fieldlist[i]
+		c_field(state, field, reg)
+		if field.type == 'array' then
+			n = n + 1
+		end
+		if i % 50 == 0 or i == n_fieldlist then
+			state.proto:emit('SETLIST', field.line, reg, n % 50 + 1,
+			                 math.ceil(n / 50))
+			n = 0
+		end
+	end
+end
+
+local c_field_t = {
+	['array'] = function(state, node)
+		return c_exp(state, node.value_exp)
+	end,
+	['hash_exp'] = function(state, node, arg)
+		local index_reg = c_exp(state, node.index_exp)
+		local value_reg = c_exp(state, node.value_exp)
+		state:ra_pop()
+		state:ra_pop()
+		return state.proto:emit('SETTABLE', node.line, arg, index_reg,
+		                        value_reg)
+	end,
+	['hash_name'] = function(state, node, arg)
+		local value_reg = c_exp(state, node.value_exp)
+		state:ra_pop()
+		return state.proto:emit('SETTABLE', node.line, arg,
+		                        state.proto:constant(node.name) + 256,
+		                        value_reg)
+	end,
+}
+function c_field(state, node, arg)
+	return c_field_t[node.type](state, node, arg)
 end
 
 function M.compile(input)

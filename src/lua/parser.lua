@@ -36,7 +36,8 @@ function p_or(t_stream, rules)
 end
 
 local p_chunk, p_stat, p_laststat, p_varlist, p_var, p_namelist, p_explist,
-      p_exp, p_prefixexp, p_prefixexp_restricted, p_args, p_functioncall
+      p_exp, p_prefixexp, p_prefixexp_restricted, p_args, p_functioncall,
+      p_tableconstructor, p_field
 
 function p_chunk(t_stream)
 	local stats = p_multiple(t_stream, p_stat)
@@ -270,6 +271,17 @@ local p_exp_t = {
 			prefixexp = prefixexp,
 		}
 	end,
+	['tableconstructor'] = function(t_stream)
+		local s, tableconstructor = p_tableconstructor(t_stream)
+		if not s then
+			return false
+		end
+		return true, {
+			rule = 'exp',
+			type = 'tableconstructor',
+			tableconstructor = tableconstructor,
+		}
+	end,
 }
 function p_exp(t_stream)
 	return p_or(t_stream, p_exp_t)
@@ -430,6 +442,101 @@ function p_functioncall(t_stream)
 		return true, exp
 	end
 	return false
+end
+
+function p_tableconstructor(t_stream)
+	if not t_stream:symbol('{') then
+		return false
+	end
+	local open = t_stream:get()
+	local s, field = p_field(t_stream)
+	local list = {field}
+	if s then
+		while true do
+			if t_stream:symbol(',') or t_stream:symbol(';') then
+				t_stream:get()
+			else
+				break
+			end
+			s, field = p_field(t_stream)
+			if s then
+				list[#list + 1] = field
+			else
+				break
+			end
+		end
+	end
+	if not t_stream:symbol('}') then
+		return error()
+	end
+	t_stream:get()
+	return true, {
+		rule = 'tableconstructor',
+		fieldlist = {
+			rule = 'fieldlist',
+			list = list,
+		}
+	}
+end
+
+function p_field(t_stream)
+	if t_stream:symbol('[') then
+		local open = t_stream:get()
+		local s, index_exp = p_exp(t_stream)
+		if not s then
+			return error()
+		end
+		if not t_stream:symbol(']') then
+			return error()
+		end
+		t_stream:get()
+		if not t_stream:symbol('=') then
+			return error()
+		end
+		t_stream:get()
+		local s, value_exp = p_exp(t_stream)
+		if not s then
+			return error()
+		end
+		return true, {
+			rule = 'field',
+			type = 'hash_exp',
+			line = open.line,
+			index_exp = index_exp,
+			value_exp = value_exp,
+		}
+	else
+		local old_pos = t_stream.pos
+		if t_stream:ident() then
+			local name = t_stream:get()
+			if t_stream:symbol('=') then
+				t_stream:get()
+				local s, exp = p_exp(t_stream)
+				if not s then
+					error()
+				end
+				return true, {
+					rule = 'field',
+					type = 'hash_name',
+					line = name.line,
+					name = name.value,
+					value_exp = exp,
+				}
+			else
+				t_stream.pos = old_pos
+			end
+		end
+		local s, exp = p_exp(t_stream)
+		if not s then
+			return false
+		end
+		return true, {
+			rule = 'field',
+			type = 'array',
+			line = exp.line,
+			value_exp = exp,
+		}
+	end
 end
 
 function M.parse(t_stream)
