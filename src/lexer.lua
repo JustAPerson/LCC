@@ -204,7 +204,7 @@ function l_rules.string(c_stream, t_stream, settings)
 		while c_stream:peek() == '=' do
 			delim = delim .. c_stream:get()
 		end
-		if not c_stream:peek() == '[' then
+		if c_stream:peek() ~= '[' then
 			return false
 		end
 		delim = delim .. c_stream:get()
