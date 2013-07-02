@@ -148,10 +148,14 @@ c_var_t = {
 	['prefixexp_exp'] = function(state, node, results, arg)
 		local prefix_reg = c_prefixexp(state, node.prefixexp, 1)
 		local exp_reg = c_exp(state, node.exp, 1)
+		state:ra_pop()
+		state:ra_pop()
 		if results == 0 then
 			state.proto:emit('SETTABLE', node.line, prefix_reg, exp_reg, arg)
 		else
-			state.proto:emit('GETTABLE', node.line, arg, prefix_reg, exp_reg)		
+			arg = state:ra_push()
+			state.proto:emit('GETTABLE', node.line, arg, prefix_reg, exp_reg)
+			return arg
 		end
 	end,
 	['prefixexp_name'] = function(state, node, results, arg)
@@ -164,7 +168,7 @@ c_var_t = {
 			arg = state:ra_push()
 			state.proto:emit('GETTABLE', node.line, arg, reg,
 			                 state.proto:constant(node.name) + 256)
-			return reg
+			return arg
 		end
 	end
 }
