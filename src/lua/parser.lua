@@ -201,60 +201,68 @@ local p_exp_t = {
 		if not t_stream:keyword('nil') then
 			return false
 		end
-		t_stream:get()
+		local get = t_stream:get()
 		return true, {
 			rule = 'exp',
 			type = 'nil',
+			line = get.line,
 		}
 	end,
 	['false'] = function(t_stream)
 		if not t_stream:keyword('false') then
 			return false
 		end
-		t_stream:get()
+		local get = t_stream:get()
 		return true, {
 			rule = 'exp',
 			type = 'false',
+			line = get.line,
 		}
 	end,
 	['true'] = function(t_stream)
 		if not t_stream:keyword('true') then
 			return false
 		end
-		t_stream:get()
+		local get = t_stream:get()
 		return true, {
 			rule = 'exp',
 			type = 'true',
+			line = get.line,
 		}
 	end,
 	['number'] = function(t_stream)
 		if not t_stream:number() then
 			return false
 		end
+		local get = t_stream:get()
 		return true, {
 			rule = 'exp',
 			type = 'number',
-			value = t_stream:get().value
+			line = get.line,
+			value = get.value,
 		}
 	end,
 	['string'] = function(t_stream)
 		if not t_stream:string() then
 			return false
 		end
+		local get = t_stream:get()
 		return true, {
 			rule = 'exp',
 			type = 'string',
-			value = t_stream:get().value
+			line = get.line,
+			value = get.value,
 		}
 	end,
 	['varg'] = function(t_stream)
 		if not t_stream:symbol('...') then
 			return false
 		end
-		t_stream:get()
+		local get = t_stream:get()
 		return true, {
 			rule = 'exp',
 			type = 'varg',
+			line = get.line,
 		}
 	end,
 	['function'] = function(t_stream)
@@ -279,6 +287,7 @@ local p_exp_t = {
 		return true, {
 			rule = 'exp',
 			type = 'tableconstructor',
+			line = tableconstructor.line,
 			tableconstructor = tableconstructor,
 		}
 	end,
@@ -472,6 +481,7 @@ function p_tableconstructor(t_stream)
 	t_stream:get()
 	return true, {
 		rule = 'tableconstructor',
+		line = open.line,
 		fieldlist = {
 			rule = 'fieldlist',
 			list = list,
