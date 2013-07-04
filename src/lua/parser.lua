@@ -1,3 +1,4 @@
+local utils = require 'utils'
 local M = {}
 
 local p_try, p_multiple, p_or
@@ -196,7 +197,7 @@ function p_explist(t_stream)
 	}
 end
 
-local p_exp_t = {
+local p_term_t = {
 	['nil'] = function(t_stream)
 		if not t_stream:keyword('nil') then
 			return false
@@ -292,8 +293,95 @@ local p_exp_t = {
 		}
 	end,
 }
+local function p_term(t_stream)
+	return p_or(t_stream, p_term_t)
+end
+local p_op_symbol = utils.lookupify {'+', '-', '*', '/', '%', '^', '#', '>',
+                               '<', '==', '~=', '<=', '>=', '..'}
+local p_op_keyword = utils.lookupify {'and', 'not', 'or'}
+local p_op_precedence = {
+	['or'] = 1,
+	['and'] = 2,
+	['<'] = 3, ['>'] = 3, ['<='] = 3, ['>='] = 3, ['~='] = 3, ['=='] = 3,
+	['..'] = 4,
+	['+'] = 5, ['-'] = 5,
+	['*'] = 6, ['/'] = 6, ['%'] = 6,
+	['not'] = 7, ['#'] = 7,
+	['^'] = 8,
+}
+local p_op_right_assoc = {
+	['^'] = true, ['..'] = true,
+}
+local function p_op_handle(exp_stack, op_stack)
+	local op = table.remove(op_stack)
+	local left, right
+	if op.precedence == 7 then
+		right = table.remove(exp_stack)
+		exp_stack[#exp_stack + 1] = {
+			rule = 'exp',
+			type = op.value,
+			line = op.line,
+			right = right,
+		}
+	else
+		right = table.remove(exp_stack)
+		left = table.remove(exp_stack)
+		exp_stack[#exp_stack + 1] = {
+			rule = 'exp',
+			type = op.value,
+			line = op.line,
+			left = left,
+			right = right,
+		}
+	end
+end
 function p_exp(t_stream)
-	return p_or(t_stream, p_exp_t)
+	local exp_stack, op_stack = {}, {}
+	if t_stream:symbol('-') or t_stream:symbol('#') or
+	   t_stream:keyword('not') then
+		local op = t_stream:get()
+		op.precedence = 7
+		op_stack[#op_stack + 1] = op
+	end
+	local expect_term = true
+	while not t_stream:eof() do
+		if expect_term then
+			local s, exp = p_term(t_stream)
+			if s then
+				exp_stack[#exp_stack + 1] = exp
+				expect_term = false
+			else
+				return error('')
+			end
+		else
+			local op = t_stream:peek()
+			if (t_stream:symbol() and p_op_symbol[op.value]) or
+			   (t_stream:keyword() and p_op_keyword[op.value]) then
+				t_stream:get()
+				op.precedence = p_op_precedence[op.value]
+				local top = op_stack[#op_stack]
+				while top do
+					local op_p, top_p = op.precedence, top.precedence 
+					if op_p < top_p or (op_p == top_p and not (top_p == 7 or 
+					    p_op_right_assoc[op.value])) then
+						p_op_handle(exp_stack, op_stack)
+					else
+						break
+					end
+					top = op_stack[#op_stack]
+				end
+				op_stack[#op_stack + 1] = op
+				expect_term = true
+			else
+				break
+			end
+		end
+	end
+	while #op_stack > 0 do
+		p_op_handle(exp_stack, op_stack)
+	end
+	local exp = exp_stack[1]
+	return exp ~= nil, exp
 end
 
 function p_prefixexp(t_stream)

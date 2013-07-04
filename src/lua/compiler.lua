@@ -111,9 +111,9 @@ c_stat_t = {
 		local top_after = state.ra_top
 
 		local top_diff = top_after - top_before
-		if n_var_list > top_after - top_before then
+		if n_var_list > top_diff then
 			top_after = top_after + 1	-- get next available register
-			state.proto:emit('LOADNIL', node.varlist.list[top_after-1].line, 
+			state.proto:emit('LOADNIL', node.varlist.list[top_diff + 1].line, 
 			                 top_after, top_after + n_var_list - top_diff)
 		end
 
@@ -121,9 +121,9 @@ c_stat_t = {
 			c_prefixexp(state, node.varlist.list[i], 0, top_before + i)
 		end
 
-		repeat
+		while state.ra_top ~= top_before do
 			state:ra_pop()
-		until state.ra_top == top_before
+		end
 	end,
 	['functioncall'] = function(state, node)
 		return c_prefixexp(state, node.prefixexp, 0)
@@ -216,6 +216,66 @@ c_exp_t = {
 	['tableconstructor'] = function(state, node)
 		return c_tableconstructor(state, node.tableconstructor)
 	end,
+	['+'] = function(state, node)
+		local left = c_exp(state, node.left)
+		local right = c_exp(state, node.right)
+		state:ra_pop()
+		state.proto:emit('ADD', node.line, left, left, right)
+		return left
+	end,
+	['-'] = function(state, node)
+		if node.left then
+			local left = c_exp(state, node.left)
+			local right = c_exp(state, node.right)
+			state:ra_pop()
+			state.proto:emit('SUB', node.line, left, left, right)
+			return left
+		else
+			local right = c_exp(state, node.right)
+			state.proto:emit('UNM', node.line, right, right)
+			return right
+		end
+	end,
+	['*'] = function(state, node)
+		local left = c_exp(state, node.left)
+		local right = c_exp(state, node.right)
+		state:ra_pop()
+		state.proto:emit('MUL', node.line, left, left, right)
+		return left
+	end,
+	['/'] = function(state, node)
+		local left = c_exp(state, node.left)
+		local right = c_exp(state, node.right)
+		state:ra_pop()
+		state.proto:emit('DIV', node.line, left, left, right)
+		return left
+	end,
+	['%'] = function(state, node)
+		local left = c_exp(state, node.left)
+		local right = c_exp(state, node.right)
+		state:ra_pop()
+		state.proto:emit('MOD', node.line, left, left, right)
+		return left
+	end,
+	['^'] = function(state, node)
+		local left = c_exp(state, node.left)
+		local right = c_exp(state, node.right)
+		state:ra_pop()
+		state.proto:emit('POW', node.line, left, left, right)
+		return left
+	end,
+	['..'] = function(state, node)
+		local left = c_exp(state, node.left)
+		local right = c_exp(state, node.right)
+		state:ra_pop()
+		state.proto:emit('CONCAT', node.line, left, left, right)
+		return left
+	end,
+	['#'] = function(state, node)
+		local right = c_exp(state, node.right)
+		state.proto:emit('LEN', node.line, right, right)
+		return right
+	end,
 }
 function c_exp(state, node, results)
 	return c_exp_t[node.type](state, node, results)
@@ -269,7 +329,8 @@ c_prefixexp_t = {
 	end,
 }
 function c_prefixexp(state, node, results, arg)
-	return c_prefixexp_t[node.type](state, node, results, arg)
+	local rule = c_prefixexp_t[node.type] or c_exp_t[node.type]
+	return rule(state, node, results, arg)
 end
 
 c_functioncalls = {
