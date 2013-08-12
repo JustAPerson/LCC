@@ -85,6 +85,50 @@ local p_stat_t = {
 			}
 		end
 	end,
+	['local_namelist'] = function(t_stream)
+		if not t_stream:keyword('local') then
+			return false
+		end
+		local open = t_stream:get()
+		if not t_stream:ident() then
+			return error('')
+		end
+		local name = t_stream:get()
+		local namelist = {
+			{
+				value = name.value,
+				line = name.line,
+			},
+		}
+		while t_stream:symbol(',') do
+			t_stream:get()
+			if not t_stream:ident() then
+				return error('')
+			end
+			name = t_stream:get()
+			namelist[#namelist + 1] = {
+				value = name.value,
+				line = name.line,
+			}
+		end
+		local s, explist
+		if t_stream:symbol('=') then
+			t_stream:get()
+			s, explist = p_explist(t_stream)
+			if not s then
+				error('')
+			end
+		end
+		return true, {
+			rule = 'statement',
+			type = 'local_namelist',
+			namelist = {
+				rule = 'namelist',
+				list = namelist,
+			},
+			explist = explist or {},
+		}
+	end,
 }
 function p_stat(t_stream)
 	if t_stream:eof() then
@@ -351,7 +395,7 @@ function p_exp(t_stream)
 				exp_stack[#exp_stack + 1] = exp
 				expect_term = false
 			else
-				return error('')
+				break
 			end
 		else
 			local op = t_stream:peek()

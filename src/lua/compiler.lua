@@ -72,6 +72,7 @@ function c_state.new()
 	local state = setmetatable({
 		proto = c_proto.new(),
 		ra_top = -1,
+		sc_state = {},
 	}, c_state.__mt)
 
 	return state
@@ -86,6 +87,20 @@ function c_state:ra_push()
 end
 function c_state:ra_pop()
 	self.ra_top = self.ra_top - 1
+end
+
+function c_state:sc_register(name, reg)
+	self.sc_state[name.value] = {
+		register = reg,
+		line = name.line,
+	}
+end
+function c_state:sc_lookup(ident)
+	local name = self.sc_state[ident]
+	if name then
+		return name.register
+	end
+	return false
 end
 
 local c_chunk, c_block, c_stat, c_stat_t, c_var, c_var_t, c_exp, c_exp_t, 
@@ -105,28 +120,26 @@ end
 c_stat_t = {
 	['varlist'] = function(state, node)
 		local n_var_list = #node.varlist.list
-
 		local top_before = state.ra_top
-		c_explist(state, node.explist, false)
-		local top_after = state.ra_top
-
-		local top_diff = top_after - top_before
-		if n_var_list > top_diff then
-			top_after = top_after + 1	-- get next available register
-			state.proto:emit('LOADNIL', node.varlist.list[top_diff + 1].line, 
-			                 top_after, top_after + n_var_list - top_diff)
-		end
-
+		c_explist(state, node.explist,  n_var_list, false)
 		for i = n_var_list, 1, -1 do
 			c_prefixexp(state, node.varlist.list[i], 0, top_before + i)
 		end
-
 		while state.ra_top ~= top_before do
 			state:ra_pop()
 		end
 	end,
 	['functioncall'] = function(state, node)
 		return c_prefixexp(state, node.prefixexp, 0)
+	end,
+	['local_namelist'] = function(state, node)
+		local namelist = node.namelist.list
+		local n_namelist = #namelist
+		local top_before = state.ra_top
+		c_explist(state, node.explist, n_namelist, false)
+		for i = 1, n_namelist do
+			state:sc_register(namelist[i], top_before + i)
+		end
 	end,
 }
 function c_stat(state, node)
@@ -135,13 +148,24 @@ end
 
 c_var_t = {
 	['name'] = function(state, node, results, arg)
+		local name = node.name
 		if results == 0 then
-			state.proto:emit('SETGLOBAL', node.line, arg,
-			                 state.proto:constant(node.name))
+			local reg = state:sc_lookup(name)
+			if reg then
+				state.proto:emit('MOVE', node.line, reg, arg)
+			else
+				state.proto:emit('SETGLOBAL', node.line, arg,
+				                 state.proto:constant(node.name))
+			end
 		else
+			local loc = state:sc_lookup(name)
 			local reg = state:ra_push()
-			state.proto:emit('GETGLOBAL', node.line, reg,
-			                 state.proto:constant(node.name))
+			if loc then
+				state.proto:emit('MOVE', node.line, reg, loc)
+			else
+				state.proto:emit('GETGLOBAL', node.line, reg,
+				                 state.proto:constant(node.name))
+			end
 			return reg
 		end
 	end,
@@ -211,7 +235,7 @@ c_exp_t = {
 	
 	end,
 	['prefixexp'] = function(state, node, results)
-		return c_prefixexp(state, node.prefixexp, results)
+		return c_prefixexp(state, node.prefixexp, 1, nil)
 	end,
 	['tableconstructor'] = function(state, node)
 		return c_tableconstructor(state, node.tableconstructor)
@@ -281,7 +305,7 @@ function c_exp(state, node, results)
 	return c_exp_t[node.type](state, node, results)
 end
 
-function c_explist(state, node, multi)
+function c_explist(state, node, max, multi)
 	local exp_list = node.list
 	local n_exp_list = #exp_list
 	local i = 0
@@ -310,15 +334,14 @@ function c_explist(state, node, multi)
 			end
 		end
 	end
-	return n_exp_list
+	if max and i ~= max then
+		state.proto:emit('LOADNIL', exp_list[i].line, i + 1, max)
+	end
+	return i
 end
 c_prefixexp_t = {
 	['var'] = function(state, node, results, arg)
-		if results == 0 then
-			return c_var(state, node.var, 0, arg)
-		else
-			return c_var(state, node.var, 1)
-		end
+		return c_var(state, node.var, results, arg)
 	end,
 	['functioncall'] = function(state, node, results)
 		local reg = c_prefixexp(state, node.prefixexp, 1)
@@ -348,7 +371,7 @@ end
 
 c_args_t = {
 	['explist'] = function(state, node)
-		return c_explist(state, node.explist, true)
+		return c_explist(state, node.explist, nil, true)
 	end,
 	['tableconstructor'] = function(state, node)
 		c_tableconstructor(state, node.tableconstructor)
@@ -402,9 +425,9 @@ function c_tableconstructor(state, node)
 		if field.type == 'array' then
 			n = n + 1
 		end
-		if i % 50 == 0 or i == n_fieldlist then
-			state.proto:emit('SETLIST', field.line, reg, n % 50 + 1,
-			                 math.ceil(n / 50))
+		if n == 50 or i == n_fieldlist then
+			state.proto:emit('SETLIST', field.line, reg,
+			                 math.min(n, n_fieldlist), math.ceil(n / 50))
 			n = 0
 		end
 	end
@@ -412,7 +435,7 @@ end
 
 local c_field_t = {
 	['array'] = function(state, node)
-		return c_exp(state, node.value_exp)
+		return c_exp(state, node.value_exp, 1)
 	end,
 	['hash_exp'] = function(state, node, arg)
 		local index_reg = c_exp(state, node.index_exp)
@@ -444,7 +467,7 @@ function M.compile(input)
 	state.proto.varg_flag = 2
 	c_chunk(state, ast)
 	state.proto:emit('RETURN', 0, 0, 1)
-	
+
 	if DEBUG then print(utils.serialize(state.proto, true)) end
 	
 	local header = string.dump(function() end):sub(1, 12)
