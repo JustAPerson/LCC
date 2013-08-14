@@ -457,7 +457,7 @@ function c_field(state, node, arg)
 	return c_field_t[node.type](state, node, arg)
 end
 
-function M.compile(input)
+local function compile(input)
 	local t_stream = c_lexer(input)
 	if DEBUG then print(utils.serialize(t_stream, true)) end
 	local _, ast = parser.parse(t_stream)
@@ -479,6 +479,14 @@ function M.compile(input)
 		proto = state.proto,
 	} 
 	return linker.link(chunk)
+end
+
+function M.compile(input)
+	local s, output = pcall(compile, input)
+	if not s then
+		error(output, 2)
+	end
+	return output
 end
 
 return M

@@ -65,9 +65,7 @@ local p_stat_t = {
 		end
 		t_stream:get()
 		local s, explist = p_explist(t_stream)
-		if not s then
-			return false
-		end
+		t_stream:check(s, '<explist>')
 		return true, {
 			rule = 'stat',
 			type = 'varlist',
@@ -90,9 +88,7 @@ local p_stat_t = {
 			return false
 		end
 		local open = t_stream:get()
-		if not t_stream:ident() then
-			return error('')
-		end
+		t_stream:check_token('ident', nil, '<name>')
 		local name = t_stream:get()
 		local namelist = {
 			{
@@ -102,9 +98,7 @@ local p_stat_t = {
 		}
 		while t_stream:symbol(',') do
 			t_stream:get()
-			if not t_stream:ident() then
-				return error('')
-			end
+			t_stream:check_token('ident', nil, '<name>')
 			name = t_stream:get()
 			namelist[#namelist + 1] = {
 				value = name.value,
@@ -115,9 +109,7 @@ local p_stat_t = {
 		if t_stream:symbol('=') then
 			t_stream:get()
 			s, explist = p_explist(t_stream)
-			if not s then
-				error('')
-			end
+			t_stream:check(s, '<explist>')
 		end
 		return true, {
 			rule = 'statement',
@@ -198,9 +190,7 @@ function p_varlist(t_stream)
 	while not t_stream:eof() and t_stream:symbol(',') do
 		t_stream:get()
 		s, var = p_var(t_stream)
-		if not s then
-			error('Variable expected after `,`')
-		end
+		t_stream:check(s, '<variable>')
 		list[#list + 1] = var
 	end
 	return true, {
@@ -230,9 +220,7 @@ function p_explist(t_stream)
 	while not t_stream:eof() and t_stream:symbol(',') do
 		t_stream:get()
 		s, var = p_exp(t_stream)
-		if not s then
-			error('Expression expected after `,`')
-		end
+		t_stream:check(s, "<expression> after ','")
 		list[#list + 1] = var
 	end
 	return true, {
@@ -387,16 +375,18 @@ function p_exp(t_stream)
 		op.precedence = 7
 		op_stack[#op_stack + 1] = op
 	end
-	local expect_term = true
-	while not t_stream:eof() do
+	local s, exp = p_term(t_stream)
+	if not s then
+		return false
+	end
+	exp_stack[1] = exp
+	local expect_term = false
+	while true do
 		if expect_term then
 			local s, exp = p_term(t_stream)
-			if s then
-				exp_stack[#exp_stack + 1] = exp
-				expect_term = false
-			else
-				break
-			end
+			t_stream:check(s, '<expression>')
+			exp_stack[#exp_stack + 1] = exp
+			expect_term = false
 		else
 			local op = t_stream:peek()
 			if (t_stream:symbol() and p_op_symbol[op.value]) or
@@ -452,9 +442,8 @@ function p_prefixexp(t_stream)
 		if t_stream:symbol('(') then
 			local open = t_stream:get()
 			local s, exp = p_exp(t_stream)
-			if not s or t_stream:eof() or not t_stream:symbol(')') then
-				return error()
-			end
+			t_stream:check(s, '<expression>')
+			t_stream:check_token('symbol', ')')
 			t_stream:get()
 			local s, prefix = p_prefixexp_restricted(t_stream, exp)
 			return true, prefix
@@ -470,12 +459,8 @@ function p_prefixexp_restricted(t_stream, exp)
 	if t_stream:symbol('[') then
 		local sym = t_stream:get()
 		local s, index_exp = p_exp(t_stream)
-		if not s then
-			return error()
-		end
-		if not t_stream:symbol(']') then
-			return error()
-		end
+		t_stream:check(s, '<expression>')
+		t_stream:check_token('symbol', ']')
 		t_stream:get()
 		return p_prefixexp_restricted(t_stream, {
 			rule = 'prefixexp',
@@ -490,9 +475,7 @@ function p_prefixexp_restricted(t_stream, exp)
 		})
 	elseif t_stream:symbol('.') then
 		local sym = t_stream:get()
-		if not t_stream:ident() then
-			return error()
-		end
+		t_stream:check_token('ident', nil, '<name>')
 		local name = t_stream:get()
 		return p_prefixexp_restricted(t_stream, {
 			rule = 'prefixexp',
@@ -509,9 +492,7 @@ function p_prefixexp_restricted(t_stream, exp)
 		local method
 		if t_stream:symbol(':') then
 			t_stream:get()
-			if not t_stream:ident() then
-				return error()
-			end
+			t_stream:check_token('ident', nil, '<name>')
 			method = t_stream:get().value
 		end
 		local s, args = p_args(t_stream, exp)
@@ -542,9 +523,7 @@ function p_args(t_stream, exp)
 		if t_stream:symbol('(') then
 			local open = t_stream:get()
 			local _, explist = p_explist(t_stream)
-			if not t_stream:symbol(')') then
-				return error()
-			end
+			t_stream:check_token('symbol', ')')
 			t_stream:get()
 			return true, {
 				rule = 'args',
@@ -607,9 +586,7 @@ function p_tableconstructor(t_stream)
 			end
 		end
 	end
-	if not t_stream:symbol('}') then
-		return error()
-	end
+	t_stream:check_token('symbol', ']')
 	t_stream:get()
 	return true, {
 		rule = 'tableconstructor',
@@ -625,21 +602,13 @@ function p_field(t_stream)
 	if t_stream:symbol('[') then
 		local open = t_stream:get()
 		local s, index_exp = p_exp(t_stream)
-		if not s then
-			return error()
-		end
-		if not t_stream:symbol(']') then
-			return error()
-		end
+		t_stream:check(s, '<expression>')
+		t_stream:check_token('symbol', ']')
 		t_stream:get()
-		if not t_stream:symbol('=') then
-			return error()
-		end
+		t_stream:check_token('symbol', '=')
 		t_stream:get()
 		local s, value_exp = p_exp(t_stream)
-		if not s then
-			return error()
-		end
+		t_stream:check(s, '<expression>')
 		return true, {
 			rule = 'field',
 			type = 'hash_exp',
@@ -654,9 +623,7 @@ function p_field(t_stream)
 			if t_stream:symbol('=') then
 				t_stream:get()
 				local s, exp = p_exp(t_stream)
-				if not s then
-					error()
-				end
+				t_stream:check(s, '<expression>')
 				return true, {
 					rule = 'field',
 					type = 'hash_name',
@@ -682,7 +649,12 @@ function p_field(t_stream)
 end
 
 function M.parse(t_stream)
-	return p_chunk(t_stream)
+	local ast = p_chunk(t_stream)
+	if not t_stream:eof() then
+		local token = t_stream:peek()
+		t_stream:error(("Unexpected %s '%s'"):format(token.type, token.value))
+	end
+	return ast
 end
 
 return M

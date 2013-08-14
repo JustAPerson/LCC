@@ -1,10 +1,8 @@
 local utils = require 'utils'
 local M = {}
 
-local g_error
-local function error(c_stream, m, e)
-	g_error(("[lic.lexer]<%s:%s> %s"):format(c_stream.line, c_stream.char, m),
-	        e)
+local function l_error(c_stream, m)
+	error(("[lcc.lexer]<%s:%s> %s"):format(c_stream.line, c_stream.char, m), 0)
 end
 
 local lookupify = utils.lookupify
@@ -49,9 +47,6 @@ function token_stream.new(char_stream)
 	setmetatable(stream, {__index = token_stream})
 	return stream
 end
-function token_stream:eof()
-	return self.pos > #self.tokens
-end
 function token_stream:add(token)
 	local ts = self.char_stream
 	token.char = ts.char
@@ -80,7 +75,7 @@ function token_stream:type(type)
 		return self:peek().type
 	end
 end
-function token_stream:check(type, value)
+function token_stream:test(type, value)
 	if not self:type(type) then
 		return false
 	end
@@ -91,10 +86,10 @@ function token_stream:check(type, value)
 	end
 end
 function token_stream:keyword(keyword)
-	return self:check('keyword', keyword)
+	return self:test('keyword', keyword)
 end
 function token_stream:symbol(symbol)
-	return self:check('symbol', symbol)
+	return self:test('symbol', symbol)
 end
 function token_stream:number()
 	return self:type('number')
@@ -104,6 +99,22 @@ function token_stream:string()
 end
 function token_stream:ident()
 	return self:type('ident')
+end
+function token_stream:eof()
+	return self:type('eof')
+end
+
+function token_stream:error(m)
+	local token = self:peek()
+	error(('[lcc.parser]<%s:%s> %s'):format(token.line, token.char, m), 0)
+end
+function token_stream:check(cond, expected)
+	if not cond then
+		self:error(('%s expected near %s'):format(expected, self:is()))
+	end
+end
+function token_stream:check_token(type, val, m)
+	self:check(self[type](self, val), m or val)
 end
 
 local l_whites = lookupify {' ', '\t', '\n',}
@@ -146,7 +157,7 @@ function l_rules.number(c_stream, t_stream, settings)
 			str = str .. c_stream:get()
 			numbers = settings.hexs
 			if not numbers[c_stream:peek()] then
-				error(c_stream, "Digit expected after 'x'")
+				l_error(c_stream, "Digit expected after 'x'")
 			end
 			str = str .. c_stream:get()
 		end
@@ -156,7 +167,7 @@ function l_rules.number(c_stream, t_stream, settings)
 		if c_stream:peek() == "." then
 			str = str .. c_stream:get()
 			if not numbers[c_stream:peek()] then
-				error(c_stream, "Digit expected after '.'")
+				l_error(c_stream, "Digit expected after '.'")
 			end
 			while numbers[c_stream:peek()] do
 				str = str .. c_stream:get()
@@ -169,7 +180,7 @@ function l_rules.number(c_stream, t_stream, settings)
 			if peek == "+" or peek == "-" then
 				str = str .. c_stream:get()
 			elseif not numbers[peek] then
-				error(c_stream, "Digit expected after 'e'")
+				l_error(c_stream, "Digit expected after 'e'")
 			end
 			while numbers[c_stream:peek()] do
 				str = str .. c_stream:get()
@@ -255,19 +266,33 @@ function M.new(settings)
 		local t_stream = token_stream.new(c_stream)
 
 		local l_rules, settings, l_whites = l_rules, settings, l_whites
-		while not c_stream:eof() do -- Parse entire c_stream
+		while true do -- Parse entire c_stream
 			while l_whites[c_stream:peek()] do
 				c_stream:get()
 			end
+			if c_stream:eof() then
+				break
+			end
 
 			local old_pos = c_stream.pos
+			local matched = false
 			for _, rule in pairs(l_rules) do	-- Try all token rules
 				if rule(c_stream, t_stream, settings) then
+					matched = true
 					break
 				end
 				c_stream.pos = old_pos
 			end
+
+			if not matched then
+				l_error(c_stream,
+				        ("Unexpected character '%s'"):format(c_stream:peek()))
+			end
 		end
+		t_stream:add {
+			type = 'eof',
+			value = '<eof>',
+		}
 
 		return t_stream
 	end
