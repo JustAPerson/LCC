@@ -586,7 +586,7 @@ function p_tableconstructor(t_stream)
 			end
 		end
 	end
-	t_stream:check_token('symbol', ']')
+	t_stream:check_token('symbol', '}')
 	t_stream:get()
 	return true, {
 		rule = 'tableconstructor',
