@@ -48,10 +48,7 @@ function p_chunk(t_stream)
 			stats[#stats + 1] = capture
 		end
 	end
-	return true, {
-		rule = 'chunk',
-		statements = stats,
-	}
+	return true, stats
 end
 
 local p_stat_t = {
@@ -67,7 +64,6 @@ local p_stat_t = {
 		local s, explist = p_explist(t_stream)
 		t_stream:check(s, '<explist>')
 		return true, {
-			rule = 'stat',
 			type = 'varlist',
 			varlist = varlist,
 			explist = explist,
@@ -77,7 +73,6 @@ local p_stat_t = {
 		local s, exp = p_functioncall(t_stream)
 		if s then
 			return true, {
-				rule = 'stat',
 				type = 'functioncall',
 				prefixexp = exp
 			}
@@ -112,12 +107,8 @@ local p_stat_t = {
 			t_stream:check(s, '<explist>')
 		end
 		return true, {
-			rule = 'statement',
 			type = 'local_namelist',
-			namelist = {
-				rule = 'namelist',
-				list = namelist,
-			},
+			namelist = namelist,
 			explist = explist or {},
 		}
 	end,
@@ -150,7 +141,6 @@ local p_laststat_t = {
 		end
 		return true, {
 			line = line,
-			rule = 'stat',
 			type = 'return',
 			explist = explist,
 		}
@@ -162,7 +152,6 @@ local p_laststat_t = {
 		local line = t_stream:get().line
 		return true, {
 			line = line,
-			rule = 'stat',
 			type = 'break',
 		}
 	end,
@@ -193,10 +182,7 @@ function p_varlist(t_stream)
 		t_stream:check(s, '<variable>')
 		list[#list + 1] = var
 	end
-	return true, {
-		rule = 'varlist',
-		list = list,
-	}
+	return true, list
 end
 
 function p_var(t_stream)
@@ -211,10 +197,7 @@ function p_explist(t_stream)
 	local list = {}
 	local s, var = p_exp(t_stream)
 	if not s then
-		return false, {
-			rule = 'explist',
-			list = list,
-		}
+		return false, list
 	end
 	list[1] = var
 	while not t_stream:eof() and t_stream:symbol(',') do
@@ -223,10 +206,7 @@ function p_explist(t_stream)
 		t_stream:check(s, "<expression> after ','")
 		list[#list + 1] = var
 	end
-	return true, {
-		rule = 'explist',
-		list = list,
-	}
+	return true, list
 end
 
 local p_term_t = {
@@ -236,7 +216,6 @@ local p_term_t = {
 		end
 		local get = t_stream:get()
 		return true, {
-			rule = 'exp',
 			type = 'nil',
 			line = get.line,
 		}
@@ -247,7 +226,6 @@ local p_term_t = {
 		end
 		local get = t_stream:get()
 		return true, {
-			rule = 'exp',
 			type = 'false',
 			line = get.line,
 		}
@@ -258,7 +236,6 @@ local p_term_t = {
 		end
 		local get = t_stream:get()
 		return true, {
-			rule = 'exp',
 			type = 'true',
 			line = get.line,
 		}
@@ -269,7 +246,6 @@ local p_term_t = {
 		end
 		local get = t_stream:get()
 		return true, {
-			rule = 'exp',
 			type = 'number',
 			line = get.line,
 			value = get.value,
@@ -281,7 +257,6 @@ local p_term_t = {
 		end
 		local get = t_stream:get()
 		return true, {
-			rule = 'exp',
 			type = 'string',
 			line = get.line,
 			value = get.value,
@@ -293,7 +268,6 @@ local p_term_t = {
 		end
 		local get = t_stream:get()
 		return true, {
-			rule = 'exp',
 			type = 'varg',
 			line = get.line,
 		}
@@ -307,7 +281,6 @@ local p_term_t = {
 			return false
 		end
 		return true, {
-			rule = 'exp',
 			type = 'prefixexp',
 			prefixexp = prefixexp,
 		}
@@ -318,7 +291,6 @@ local p_term_t = {
 			return false
 		end
 		return true, {
-			rule = 'exp',
 			type = 'tableconstructor',
 			line = tableconstructor.line,
 			tableconstructor = tableconstructor,
@@ -350,7 +322,6 @@ local function p_op_handle(exp_stack, op_stack)
 	if op.precedence == 7 then
 		right = table.remove(exp_stack)
 		exp_stack[#exp_stack + 1] = {
-			rule = 'exp',
 			type = op.value,
 			line = op.line,
 			right = right,
@@ -359,7 +330,6 @@ local function p_op_handle(exp_stack, op_stack)
 		right = table.remove(exp_stack)
 		left = table.remove(exp_stack)
 		exp_stack[#exp_stack + 1] = {
-			rule = 'exp',
 			type = op.value,
 			line = op.line,
 			left = left,
@@ -425,10 +395,8 @@ function p_prefixexp(t_stream)
 	if t_stream:ident() then
 		local ident = t_stream:get()
 		return p_prefixexp_restricted(t_stream, {
-			rule = 'prefixexp',
 			type = 'var',
 			var = {
-				rule = 'var',
 				type = 'name',
 				line = ident.line,
 				name = ident.value,
@@ -463,11 +431,9 @@ function p_prefixexp_restricted(t_stream, exp)
 		t_stream:check_token('symbol', ']')
 		t_stream:get()
 		return p_prefixexp_restricted(t_stream, {
-			rule = 'prefixexp',
 			type = 'var',
 			line = sym.line,
 			var = {
-				rule = 'var',
 				type = 'prefixexp_exp',
 				prefixexp = exp,
 				exp = index_exp,
@@ -478,11 +444,9 @@ function p_prefixexp_restricted(t_stream, exp)
 		t_stream:check_token('ident', nil, '<name>')
 		local name = t_stream:get()
 		return p_prefixexp_restricted(t_stream, {
-			rule = 'prefixexp',
 			type = 'var',
 			line = sym.line,
 			var = {
-				rule = 'var',
 				type = 'prefixexp_name',
 				prefixexp = exp,
 				name = name.value,
@@ -498,7 +462,6 @@ function p_prefixexp_restricted(t_stream, exp)
 		local s, args = p_args(t_stream, exp)
 		if s then
 			local token = {
-				rule = 'functioncall',
 				type = method and 'method' or 'normal',
 				line = args.line,
 				args = args
@@ -507,7 +470,6 @@ function p_prefixexp_restricted(t_stream, exp)
 				token.name = method
 			end
 			return p_prefixexp_restricted(t_stream, {
-				rule = 'prefixexp',
 				type = 'functioncall',
 				prefixexp = exp,
 				functioncall = token,
@@ -526,7 +488,6 @@ function p_args(t_stream, exp)
 			t_stream:check_token('symbol', ')')
 			t_stream:get()
 			return true, {
-				rule = 'args',
 				type = 'explist',
 				line = open.line,
 				explist = explist,
@@ -534,7 +495,6 @@ function p_args(t_stream, exp)
 		elseif t_stream:symbol('{') then
 			local _, tableconstructor = p_tableconstructor()
 			return true, {
-				rule = 'args',
 				type = 'tableconstructor',
 				line = tableconstructor.line,
 				tableconstructor = tableconstructor,
@@ -542,7 +502,6 @@ function p_args(t_stream, exp)
 		elseif t_stream:string() then
 			local str = t_stream:get().value
 			return true, {
-				rule = 'args',
 				type = 'string',
 				line = str.line,
 				value = str.value,
@@ -558,7 +517,7 @@ function p_functioncall(t_stream)
 	if not s then
 		return false
 	end
-	if exp.rule == 'prefixexp' and exp.type == 'functioncall' then
+	if exp.type == 'functioncall' then
 		return true, exp
 	end
 	return false
@@ -589,12 +548,8 @@ function p_tableconstructor(t_stream)
 	t_stream:check_token('symbol', '}')
 	t_stream:get()
 	return true, {
-		rule = 'tableconstructor',
 		line = open.line,
-		fieldlist = {
-			rule = 'fieldlist',
-			list = list,
-		}
+		fieldlist = list,
 	}
 end
 
@@ -610,7 +565,6 @@ function p_field(t_stream)
 		local s, value_exp = p_exp(t_stream)
 		t_stream:check(s, '<expression>')
 		return true, {
-			rule = 'field',
 			type = 'hash_exp',
 			line = open.line,
 			index_exp = index_exp,
@@ -625,7 +579,6 @@ function p_field(t_stream)
 				local s, exp = p_exp(t_stream)
 				t_stream:check(s, '<expression>')
 				return true, {
-					rule = 'field',
 					type = 'hash_name',
 					line = name.line,
 					name = name.value,
@@ -640,7 +593,6 @@ function p_field(t_stream)
 			return false
 		end
 		return true, {
-			rule = 'field',
 			type = 'array',
 			line = exp.line,
 			value_exp = exp,
@@ -649,7 +601,7 @@ function p_field(t_stream)
 end
 
 function M.parse(t_stream)
-	local ast = p_chunk(t_stream)
+	local s, ast = p_chunk(t_stream)
 	if not t_stream:eof() then
 		local token = t_stream:peek()
 		t_stream:error(("Unexpected %s '%s'"):format(token.type, token.value))

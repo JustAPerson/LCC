@@ -108,7 +108,7 @@ local c_chunk, c_block, c_stat, c_stat_t, c_var, c_var_t, c_exp, c_exp_t,
       c_args, c_args_t, c_tableconstructor, c_field
 
 function c_chunk(state, node)
-	for _, statement in pairs(node.statements) do
+	for _, statement in pairs(node) do
 		c_stat(state, statement)
 	end
 end
@@ -119,11 +119,11 @@ end
 
 c_stat_t = {
 	['varlist'] = function(state, node)
-		local n_var_list = #node.varlist.list
+		local n_var_list = #node.varlist
 		local top_before = state.ra_top
 		c_explist(state, node.explist,  n_var_list, false)
 		for i = n_var_list, 1, -1 do
-			c_prefixexp(state, node.varlist.list[i], 0, top_before + i)
+			c_prefixexp(state, node.varlist[i], 0, top_before + i)
 		end
 		while state.ra_top ~= top_before do
 			state:ra_pop()
@@ -133,7 +133,7 @@ c_stat_t = {
 		return c_prefixexp(state, node.prefixexp, 0)
 	end,
 	['local_namelist'] = function(state, node)
-		local namelist = node.namelist.list
+		local namelist = node.namelist
 		local n_namelist = #namelist
 		local top_before = state.ra_top
 		c_explist(state, node.explist, n_namelist, false)
@@ -305,8 +305,7 @@ function c_exp(state, node, results)
 	return c_exp_t[node.type](state, node, results)
 end
 
-function c_explist(state, node, max, multi)
-	local exp_list = node.list
+function c_explist(state, exp_list, max, multi)
 	local n_exp_list = #exp_list
 	local i = 0
 	while i < n_exp_list do
@@ -316,7 +315,7 @@ function c_explist(state, node, max, multi)
 			local n = i
 			i = i + 1
 			local reg = state:ra_push()
-			while i <= n_exp_list and node.explist[i].type == 'nil' do
+			while i <= n_exp_list and exp_list[i].type == 'nil' do
 				state:ra_push()
 				i = i + 1
 			end
@@ -407,7 +406,7 @@ end
 
 function c_tableconstructor(state, node)
 	local n_array, n_hash = 0
-	local fieldlist = node.fieldlist.list
+	local fieldlist = node.fieldlist
 	local n_fieldlist = #fieldlist
 	for i = 1, n_fieldlist do
 		if fieldlist[i].type == 'array' then
@@ -460,7 +459,7 @@ end
 local function compile(input)
 	local t_stream = c_lexer(input)
 	if DEBUG then print(utils.serialize(t_stream, true)) end
-	local _, ast = parser.parse(t_stream)
+	local ast = parser.parse(t_stream)
 	if DEBUG then print(utils.serialize(ast, true)) end
 	
 	local state = c_state.new()
