@@ -481,7 +481,15 @@ local function compile(input)
 end
 
 function M.compile(input)
-	local s, output = pcall(compile, input)
+	local s, output = xpcall(function()
+		return compile(input)
+	end, function(err)
+		if err:match('^%[lcc') then
+			return err
+		else
+			return debug.traceback(err)
+		end
+	end)
 	if not s then
 		error(output, 2)
 	end
